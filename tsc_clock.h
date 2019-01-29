@@ -117,7 +117,7 @@ inline void TSCClock::Initialise()
 	{
 		tscFreq = detail::MeasureTSCFrequency();
 
-		if (tscFreq > prevFreq * 0.99999 && tscFreq < prevFreq * 1.00001)
+		if (tscFreq > prevFreq * 0.9999 && tscFreq < prevFreq * 1.0001)
 		{
 			break;
 		}
