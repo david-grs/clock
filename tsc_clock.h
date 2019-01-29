@@ -77,7 +77,7 @@ inline double MeasureTSCFrequency()
 
 	if (core != core2 || chip != chip2)
 	{
-		throw std::runtime_error("TSCClock: process needs to be pin to a specific core while calibrating tsc");
+		throw std::runtime_error("TSCClock: process needs to be set to a specific core");
 	}
 
 	const auto durationNs = std::chrono::duration_cast<std::chrono::nanoseconds>(endTs - startTs);
