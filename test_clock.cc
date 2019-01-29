@@ -3,8 +3,6 @@
 
 #include "tsc_clock.h"
 
-#include <x86intrin.h>
-
 int main()
 {
 	TSCClock::Initialise();
