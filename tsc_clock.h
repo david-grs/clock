@@ -48,6 +48,13 @@ inline uint64_t rdtsc()
 	return (rdx << 32) + rax;
 }
 
+inline uint64_t rdtscp()
+{
+	uint64_t rax, rdx;
+	__asm__ __volatile__("rdtscp" : "=a"(rax), "=d"(rdx));
+	return (rdx << 32) + rax;
+}
+
 inline uint64_t rdtscp(int& chip, int& core)
 {
 	uint64_t rax, rcx, rdx;
@@ -92,7 +99,7 @@ inline double MeasureTSCFrequency()
 
 inline TSCClock::time_point TSCClock::now() noexcept
 {
-	return TSCClock::time_point{detail::rdtsc()};
+	return detail::rdtscp();
 }
 
 inline std::chrono::nanoseconds TSCClock::FromCycles(uint64_t cycles)
