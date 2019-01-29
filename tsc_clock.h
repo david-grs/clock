@@ -9,9 +9,13 @@
 class TSCClock
 {
 public:
+	static constexpr bool is_steady = true; // tsc is steady on all modern processors
+
+	using time_point = uint64_t;
+	static time_point now() noexcept;
+
 	static void Initialise();
 
-	static uint64_t Now();
 	static std::chrono::nanoseconds FromCycles(uint64_t);
 
 	template <class DurationT>
@@ -86,9 +90,9 @@ inline double MeasureTSCFrequency()
 
 }
 
-inline uint64_t TSCClock::Now()
+inline TSCClock::time_point TSCClock::now() noexcept
 {
-	return detail::rdtsc();
+	return TSCClock::time_point{detail::rdtsc()};
 }
 
 inline std::chrono::nanoseconds TSCClock::FromCycles(uint64_t cycles)
@@ -125,5 +129,3 @@ inline void TSCClock::Initialise()
 		prevFreq = tscFreq;
 	}
 }
-
-
