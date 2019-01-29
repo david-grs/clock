@@ -1,10 +1,10 @@
 #pragma once
 
-#include <ctime>
 #include <chrono>
+#include <type_traits>
+#include <thread>
 #include <cstdint>
 #include <stdexcept>
-#include <cstring>
 
 class TSCClock
 {
@@ -53,40 +53,35 @@ inline uint64_t rdtscp(int& chip, int& core)
 	return (rdx << 32) + rax;
 }
 
-inline bool MeasureTSCFrequency(double& freq)
+inline double MeasureTSCFrequency()
 {
-	static const std::size_t SleepDurationNs = 20000000;
-
-	struct timespec ts;
-	ts.tv_nsec = SleepDurationNs;
-	ts.tv_sec = 0;
+	using SteadyClock = std::conditional_t<
+			std::chrono::high_resolution_clock::is_steady,
+			std::chrono::high_resolution_clock,
+			std::chrono::steady_clock>;
 
 	int chip, core, chip2, core2;
 
-	detail::cpuid();
-	const auto startTs = detail::rdtscp(chip, core);
+	const auto startTs = SteadyClock::now();
+	asm volatile("" : : "r,m"(startTs) : "memory");
 
-	const int ret = nanosleep(&ts, &ts);
-
-	const auto endTs = detail::rdtscp(chip2, core2);
+	const auto startTSC = detail::rdtscp(chip, core);
 	detail::cpuid();
+
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+	const auto endTSC = detail::rdtscp(chip2, core2);
+	detail::cpuid();
+
+	const auto endTs = SteadyClock::now();
 
 	if (core != core2 || chip != chip2)
 	{
-		throw std::runtime_error("tsc_clock: process needs to be pin to a specific core while calibrating tsc");
+		throw std::runtime_error("TSCClock: process needs to be pin to a specific core while calibrating tsc");
 	}
 
-	if (ret != 0 && errno != EINTR)
-	{
-		throw std::runtime_error(std::string("TSCClock: nanosleep failed, reason: ") + std::strerror(errno));
-	}
-	else if (ret != 0)
-	{
-		return false;
-	}
-
-	freq = (endTs - startTs) / double(SleepDurationNs);
-	return true;
+	const auto durationNs = std::chrono::duration_cast<std::chrono::nanoseconds>(endTs - startTs);
+	return (endTSC - startTSC) / double(durationNs.count());
 }
 
 }
@@ -118,14 +113,13 @@ inline void TSCClock::Initialise()
 	}
 
 	double prevFreq = -1.0;
-	int i;
-	for (i = 0; i < 1000000; ++i)
+	for (int i = 0; i < 10; ++i)
 	{
-		while (!detail::MeasureTSCFrequency(tscFreq));
+		tscFreq = detail::MeasureTSCFrequency();
 
-		if (tscFreq > prevFreq * 0.9999 && tscFreq < prevFreq * 1.0001)
+		if (tscFreq > prevFreq * 0.99999 && tscFreq < prevFreq * 1.00001)
 		{
-			return;
+			break;
 		}
 
 		prevFreq = tscFreq;
