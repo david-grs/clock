@@ -1,8 +1,10 @@
 #pragma once
 
+#include <ctime>
 #include <chrono>
-#include <thread>
-#include <type_traits>
+#include <cstdint>
+#include <stdexcept>
+#include <cstring>
 
 class TSCClock
 {
@@ -15,8 +17,10 @@ public:
 	template <class DurationT>
 	static uint64_t ToCycles(DurationT);
 
+	static double GetFrequencyGHz() { return GetFrequencyGHzImpl(); }
+
 private:
-	static double& GetFrequencyGHz()
+	static double& GetFrequencyGHzImpl()
 	{
 		static double TSCFreqGHz = .0;
 		return TSCFreqGHz;
@@ -26,17 +30,18 @@ private:
 namespace detail
 {
 
-inline uint64_t rdtscp()
-{
-	uint64_t rax, rcx, rdx;
-	__asm__ __volatile__("rdtscp" : "=a"(rax), "=d"(rdx), "=c"(rcx));
-	return (rdx << 32) + rax;
-}
-
 inline void cpuid()
 {
 	uint64_t rax, rbx, rcx, rdx;
 	__asm__ __volatile__("cpuid" : "=a"(rax), "=b"(rbx), "=d"(rdx), "=c"(rcx));
+	asm volatile("" : : "r,m"(rax) : "memory");
+}
+
+inline uint64_t rdtsc()
+{
+	uint64_t rax, rdx;
+	__asm__ __volatile__ ("rdtsc" : "=a"(rax), "=d"(rdx));
+	return (rdx << 32) + rax;
 }
 
 inline uint64_t rdtscp(int& chip, int& core)
@@ -48,11 +53,47 @@ inline uint64_t rdtscp(int& chip, int& core)
 	return (rdx << 32) + rax;
 }
 
+inline bool MeasureTSCFrequency(double& freq)
+{
+	static const std::size_t SleepDurationNs = 20000000;
+
+	struct timespec ts;
+	ts.tv_nsec = SleepDurationNs;
+	ts.tv_sec = 0;
+
+	int chip, core, chip2, core2;
+
+	detail::cpuid();
+	const auto startTs = detail::rdtscp(chip, core);
+
+	const int ret = nanosleep(&ts, &ts);
+
+	const auto endTs = detail::rdtscp(chip2, core2);
+	detail::cpuid();
+
+	if (core != core2 || chip != chip2)
+	{
+		throw std::runtime_error("tsc_clock: process needs to be pin to a specific core while calibrating tsc");
+	}
+
+	if (ret != 0 && errno != EINTR)
+	{
+		throw std::runtime_error(std::string("TSCClock: nanosleep failed, reason: ") + std::strerror(errno));
+	}
+	else if (ret != 0)
+	{
+		return false;
+	}
+
+	freq = (endTs - startTs) / double(SleepDurationNs);
+	return true;
+}
+
 }
 
 inline uint64_t TSCClock::Now()
 {
-	return detail::rdtscp();
+	return detail::rdtsc();
 }
 
 inline std::chrono::nanoseconds TSCClock::FromCycles(uint64_t cycles)
@@ -68,40 +109,27 @@ inline uint64_t TSCClock::ToCycles(DurationT duration)
 	return static_cast<uint64_t>(nanoseconds * GetFrequencyGHz());
 }
 
-
 inline void TSCClock::Initialise()
 {
-	double& tscFreq = GetFrequencyGHz();
+	double& tscFreq = GetFrequencyGHzImpl();
 	if (tscFreq != .0)
 	{
 		return;
 	}
 
-	using Clock = std::conditional_t<std::chrono::high_resolution_clock::is_steady,
-									 std::chrono::high_resolution_clock,
-									 std::chrono::steady_clock>;
+	double prevFreq = -1.0;
+	int i;
+	for (i = 0; i < 1000000; ++i)
+	{
+		while (!detail::MeasureTSCFrequency(tscFreq));
 
-	int chip, core, chip2, core2;
+		if (tscFreq > prevFreq * 0.9999 && tscFreq < prevFreq * 1.0001)
+		{
+			return;
+		}
 
-	auto start = Clock::now();
-
-	detail::cpuid();
-	uint64_t rdtsc_start = detail::rdtscp(chip, core);
-
-	std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-	uint64_t rdtsc_end = detail::rdtscp(chip2, core2);
-	detail::cpuid();
-
-	auto end = Clock::now();
-
-	if (core != core2 || chip != chip2)
-		throw std::runtime_error("tsc_clock: process needs to be pin to a specific core");
-
-	auto duration_s = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-	uint64_t cycles = rdtsc_end - rdtsc_start;
-
-	tscFreq = static_cast<double>(cycles) / static_cast<double>(duration_s.count());
+		prevFreq = tscFreq;
+	}
 }
 
 
